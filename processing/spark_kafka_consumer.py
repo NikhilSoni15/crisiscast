@@ -17,6 +17,8 @@ HF_TOKEN = os.getenv("HF_API_KEY")
 HF_API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
+os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.0 pyspark-shell'
+
 # 2. Create Spark Session
 spark = SparkSession.builder \
     .appName("RedditKafkaCrisisClassifier") \
