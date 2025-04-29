@@ -4,10 +4,11 @@ from pyspark.sql.types import StructType, StringType, DoubleType
 import os
 import requests
 from dotenv import load_dotenv
-from pymongo import MongoClient
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
+# due to local import we must run as `python -m processing.spark_kafka_consumer`
+from storage.mongo_storage import MongoStorage
 import uuid
 
 # 1. Load environment variables
@@ -77,9 +78,7 @@ classify_crisis_udf = udf(classify_crisis_type, StringType())
 df_with_crisis_type = df_parsed.withColumn("crisis_type", classify_crisis_udf(col("title"), col("selftext")))
 
 # 9. Setup MongoDB client (outside function for efficiency)
-mongo_client = MongoClient("mongodb://localhost:27017/")
-db = mongo_client["crisiscast"]
-mongo_collection = db["reddit_posts"]
+mongo_client = MongoStorage(os.getenv("MONGODB_STRING", ""), "crisiscast_test")
 
 # 10. Setup Qdrant client and embedding model (also outside)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -98,7 +97,7 @@ def write_to_all_outputs(df, epoch_id):
         return
     
     # MongoDB Insert
-    mongo_collection.insert_many(data)
+    mongo_client.insert_many("reddit_posts", data)
     
     # Qdrant Insert
     points = []
