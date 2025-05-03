@@ -19,3 +19,4 @@ for message in consumer:
     print(f"📝 Title: {post['title']}")
     print(f"👤 Author: {post['author']}")
     print(f"🔗 URL: {post['url']}")
+

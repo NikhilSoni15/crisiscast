@@ -1,9 +1,13 @@
 import os
 import time
 import praw
+import dotenv
 from dotenv import load_dotenv
 import json
 from kafka import KafkaProducer
+#import datetime
+from datetime import datetime, timezone
+
 # Load secrets
 load_dotenv("config/.env")
 print(":key: Username loaded:", os.getenv("REDDIT_USERNAME"))
@@ -33,11 +37,10 @@ def main():
         post = {
             "id": submission.id,
             "title": submission.title,
-            "selftext": submission.selftext,
-            "created_utc": submission.created_utc,
+            "timestamp": datetime.fromtimestamp(submission.created_utc, timezone.utc ).isoformat(),
             "author": str(submission.author),
-            "url": submission.url,
-            "subreddit": str(submission.subreddit),
+            "url": f"https://www.reddit.com{submission.permalink}",
+            "source": "r/" + str(submission.subreddit),
         }
         print(f"\n:pushpin: {post['title']}")
         print(post)
