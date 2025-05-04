@@ -6,7 +6,7 @@ TOPICS = ['reddit_posts', 'bluesky_posts', 'google_news_posts']
 
 consumer = KafkaConsumer(
     *TOPICS,
-    bootstrap_servers='localhost:9092',
+    bootstrap_servers=['localhost:9095', 'localhost:9096', 'localhost:9097'],
     auto_offset_reset='latest',
     enable_auto_commit=True,
     group_id='general-consumer-group',

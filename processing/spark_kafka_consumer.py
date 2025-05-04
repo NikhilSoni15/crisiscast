@@ -25,7 +25,7 @@ HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 # 2. Create Spark Session with improved configurations
 spark = SparkSession.builder \
     .appName("RedditKafkaCrisisClassifier") \
-    .config("spark.master", "spark://spark-master:7077") \
+    .config("spark.master", "local[*]") \
     .config("spark.executor.memory", "2g") \
     .config("spark.driver.memory", "4g") \
     .config("spark.driver.maxResultSize", "1g") \
@@ -41,21 +41,23 @@ spark = SparkSession.builder \
 # Set log level to minimize unnecessary output
 spark.sparkContext.setLogLevel("WARN")
 
-# 3. Define schema for incoming JSON
+# Define schema for incoming JSON
 schema = StructType() \
     .add("id", StringType()) \
     .add("title", StringType()) \
-    .add("selftext", StringType()) \
-    .add("created_utc", DoubleType()) \
+    .add("selftext", StringType(), True) \
+    .add("timestamp", StringType(), True) \
+    .add("created_utc", DoubleType(), True) \
     .add("author", StringType()) \
     .add("url", StringType()) \
-    .add("subreddit", StringType())
+    .add("subreddit", StringType(), True) \
+    .add("source", StringType(), True)
 
 # 4. Read from Kafka with updated configurations
 df_raw = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "localhost:9095,localhost:9096,localhost:9097") \
-    .option("subscribe", "reddit_posts") \
+    .option("subscribe", "reddit_posts,bluesky_posts,google_news_posts")\
     .option("startingOffsets", "latest") \
     .option("failOnDataLoss", "false") \
     .option("maxOffsetsPerTrigger", 1000) \
@@ -69,139 +71,50 @@ df_parsed = df_raw.selectExpr("CAST(value AS STRING) as json_str") \
 # Add timestamp for window operations and monitoring
 df_with_time = df_parsed.withColumn("processing_time", current_timestamp())
 
-# 6. Crisis Classification - IMPROVED to avoid API overload
-# Create a classification cache to reduce API calls
-classification_cache = {}
-classification_lock = threading.Lock()
-
-# Set up batched API calls - store pending requests
-pending_requests = []
-pending_lock = threading.Lock()
-MAX_BATCH_SIZE = 10  # Maximum number of requests to batch
-BATCH_TIMEOUT = 5  # Seconds to wait before processing a partial batch
-
-# Create a thread-safe cache using lru_cache
-@lru_cache(maxsize=1000)
-def get_cached_classification(title):
-    """Thread-safe cached classification lookup"""
-    return classification_cache.get(title, None)
-
-def add_to_classification_cache(title, classification):
-    """Thread-safe cache update"""
-    with classification_lock:
-        classification_cache[title] = classification
-
-# Function to process batched API requests
-def process_batch_requests():
-    global pending_requests
-    
-    while True:
-        # Wait until we have some requests
-        time.sleep(0.1)
-        
-        batch_to_process = None
-        with pending_lock:
-            # Check if we have enough requests or if timeout has elapsed
-            if pending_requests and (len(pending_requests) >= MAX_BATCH_SIZE or 
-                                     (time.time() - pending_requests[0]["timestamp"] > BATCH_TIMEOUT)):
-                batch_to_process = pending_requests[:MAX_BATCH_SIZE]
-                pending_requests = pending_requests[MAX_BATCH_SIZE:] if len(pending_requests) > MAX_BATCH_SIZE else []
-        
-        if batch_to_process:
-            try:
-                # Extract just the inputs
-                prompts = [item["prompt"] for item in batch_to_process]
-                
-                # Make a single API call for multiple inputs
-                response = requests.post(
-                    HF_API_URL,
-                    headers=HEADERS,
-                    json={"inputs": prompts},
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    results = response.json()
-                    
-                    # Process each result and update corresponding item
-                    for i, result in enumerate(results):
-                        if i < len(batch_to_process):
-                            generated_text = result.get("generated_text", "").strip().lower()
-                            item = batch_to_process[i]
-                            
-                            # Extract crisis type
-                            crisis_type = "none"
-                            allowed = ["natural_disaster", "terrorist_attack", "cyberattack", 
-                                      "pandemic", "war", "financial_crisis", "none"]
-                            
-                            for label in allowed:
-                                if label in generated_text:
-                                    crisis_type = label
-                                    break
-                            
-                            # Update result and cache
-                            item["result"].append(crisis_type)
-                            add_to_classification_cache(item["title"], crisis_type)
-                else:
-                    print(f"Batch API Error: {response.status_code} {response.text}")
-                    # Fall back to "none" for all items in the batch
-                    for item in batch_to_process:
-                        item["result"].append("none")
-                        add_to_classification_cache(item["title"], "none")
-                        
-            except Exception as e:
-                print(f"Batch processing error: {e}")
-                # Fall back to "none" for all items in the batch
-                for item in batch_to_process:
-                    item["result"].append("none")
-                    add_to_classification_cache(item["title"], "none")
-
-# Start the batch processing thread
-batch_thread = threading.Thread(target=process_batch_requests, daemon=True)
-batch_thread.start()
-
-def classify_crisis_type_optimized(title, selftext):
-    """Optimized classification function that uses batching and caching"""
+# Simple classification function without threading
+def classify_crisis_type_simple(title, selftext):
+    """Simple classification function without threading dependencies"""
     if not title:
         return "none"
     
-    # Check cache first
-    cached_result = get_cached_classification(title)
-    if cached_result is not None:
-        return cached_result
-    
-    # Create a shared result list for thread communication
-    result_container = []
-    
-    # Create prompt
+    # Direct API call
     prompt = f"Classify the type of crisis in the following sentence:\n{title}\nCrisis type:"
     
-    # Add to pending requests
-    request_item = {
-        "title": title,
-        "prompt": prompt,
-        "result": result_container,
-        "timestamp": time.time()
-    }
-    
-    with pending_lock:
-        pending_requests.append(request_item)
-    
-    # Wait for result with timeout
-    start_time = time.time()
-    while not result_container and time.time() - start_time < 10:
-        time.sleep(0.1)
-    
-    # Return result or fallback
-    if result_container:
-        return result_container[0]
-    else:
-        # Fallback - store "none" in cache
-        add_to_classification_cache(title, "none")
+    try:
+        response = requests.post(
+            HF_API_URL,
+            headers=HEADERS,
+            json={"inputs": prompt},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            results = response.json()
+            if isinstance(results, list) and len(results) > 0:
+                generated_text = results[0].get("generated_text", "").strip().lower()
+            else:
+                generated_text = results.get("generated_text", "").strip().lower()
+            
+            # Extract crisis type
+            crisis_type = "none"
+            allowed = ["natural_disaster", "terrorist_attack", "cyberattack", 
+                      "pandemic", "war", "financial_crisis", "none"]
+            
+            for label in allowed:
+                if label in generated_text:
+                    crisis_type = label
+                    break
+                
+            return crisis_type
+        else:
+            print(f"API Error: {response.status_code} {response.text}")
+            return "none"
+    except Exception as e:
+        print(f"Classification error: {e}")
         return "none"
 
 # 7. Register UDF
-classify_crisis_udf = udf(classify_crisis_type_optimized, StringType())
+classify_crisis_udf = udf(classify_crisis_type_simple, StringType())
 
 # 8. Apply UDF to DataFrame
 df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf(col("title"), col("selftext")))
@@ -215,7 +128,6 @@ mongo_client = MongoClient(
     retryWrites=True
 )
 db = mongo_client["crisiscast"]
-mongo_collection = db["reddit_posts"]
 
 # 10. Setup Qdrant client and embedding model lazily to avoid driver memory issues
 embedding_model = None
@@ -239,7 +151,6 @@ except Exception as e:
         vectors_config={"size": 384, "distance": "Cosine"}
     )
 
-# 11. Final batch write function with optimizations
 def write_to_all_outputs(df, epoch_id):
     global embedding_model
     
@@ -256,10 +167,7 @@ def write_to_all_outputs(df, epoch_id):
             print(f"Error initializing embedding model: {e}")
             return
     
-    # Process in smaller chunks to avoid memory issues
-    MAX_CHUNK_SIZE = 100
-    
-    # Convert to pandas more efficiently by processing in chunks
+    # Convert to pandas
     try:
         pandas_df = df.toPandas()
         data = pandas_df.to_dict("records")
@@ -270,27 +178,39 @@ def write_to_all_outputs(df, epoch_id):
     if not data:
         return
     
-    # Process in chunks
-    for i in range(0, len(data), MAX_CHUNK_SIZE):
-        chunk = data[i:i+MAX_CHUNK_SIZE]
+    # Process each document
+    for doc in data:
+        # Determine the appropriate collection based on source or fields
+        if "source" in doc and "Bluesky" in str(doc.get("source", "")):
+            target_collection = db["bluesky_posts"]
+        elif "source" in doc and "Google" in str(doc.get("source", "")):
+            target_collection = db["google_news_posts"]
+        else:
+            # Default to reddit_posts if source field is missing or unknown
+            target_collection = db["reddit_posts"]
         
-        # MongoDB Insert with retry
+        # Insert into the appropriate collection
         try:
-            mongo_collection.insert_many(chunk, ordered=False)
+            target_collection.insert_one(doc)
         except Exception as e:
             print(f"MongoDB error: {e}")
-            # Try one by one as fallback
-            for doc in chunk:
-                try:
-                    mongo_collection.insert_one(doc)
-                except Exception as e2:
-                    print(f"Failed to insert document: {e2}")
+    
+    # Qdrant vector processing
+    # Process in smaller chunks to avoid memory issues
+    MAX_CHUNK_SIZE = 100
+    for i in range(0, len(data), MAX_CHUNK_SIZE):
+        chunk = data[i:i+MAX_CHUNK_SIZE]
         
         # Qdrant Insert
         points = []
         for row in chunk:
             try:
-                text = f"{row.get('title', '')} {row.get('selftext', '')}".strip()
+                # Get text to vectorize (handle different document structures)
+                if "selftext" in row and row.get("selftext"):
+                    text = f"{row.get('title', '')} {row.get('selftext', '')}".strip()
+                else:
+                    text = row.get('title', '').strip()
+                
                 if not text:
                     continue
                 
@@ -304,7 +224,8 @@ def write_to_all_outputs(df, epoch_id):
                         "title": row.get("title", ""),
                         "url": row.get("url", ""),
                         "crisis_type": row.get("crisis_type", "none"),
-                        "reddit_id": row.get("id", "")
+                        "source": row.get("source", "reddit"),
+                        "id": row.get("id", "")
                     }
                 ))
             except Exception as e:

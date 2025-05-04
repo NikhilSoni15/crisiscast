@@ -1,6 +1,7 @@
 import os
 import time
 import json
+from pathlib import Path
 import requests
 import feedparser
 import certifi
@@ -10,7 +11,8 @@ from datetime import timezone
 from dotenv import load_dotenv
 from requests.exceptions import RequestException
 
-load_dotenv("config/.env")
+env_path = Path(__file__).parent.parent.absolute() / ".env"
+load_dotenv(env_path)
 RSS_URL       = os.getenv("NEWS_RSS_URL")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 60))
 
@@ -19,9 +21,13 @@ def stream_news():
 
     # set up Kafka producer
     producer = KafkaProducer(
-        bootstrap_servers='localhost:9092',
-        value_serializer=lambda v: json.dumps(v).encode('utf-8')
-    )
+    bootstrap_servers=['localhost:9095', 'localhost:9096', 'localhost:9097'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+    acks='all',  # Wait for all replicas
+    retries=5,  # Retry 5 times if failure
+    batch_size=16384,  # Batch size in bytes
+    linger_ms=100  # Wait time for batching
+)
 
     print("🚀 Streaming RSS from", RSS_URL)
     while True:

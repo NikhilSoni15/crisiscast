@@ -26,7 +26,12 @@ except Exception as e:
     print(":x: Login failed:", e)
 producer = KafkaProducer(
     bootstrap_servers = ['localhost:9095', 'localhost:9096', 'localhost:9097'],
-    value_serializer = lambda v: json.dumps(v).encode('utf-8')
+    value_serializer = lambda v: json.dumps(v).encode('utf-8'),
+    acks='all',  # Wait for all replicas
+    retries=5,  # Retry 5 times if failure
+    batch_size=16384,  # Batch size in bytes
+    linger_ms=100  # Wait time for batching
+
 )
 def main():
     print(":rocket: Connected to Reddit API. Listening to subreddit...")
