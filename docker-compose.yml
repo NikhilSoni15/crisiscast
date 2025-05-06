@@ -1,16 +1,129 @@
-version: '2'
+version: '3.8'
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
-
-  kafka:
+    networks:
+      - kafka-net
+  
+  kafka1:
     image: confluentinc/cp-kafka:latest
     ports:
-      - "9092:9092"
+      - "9095:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LISTENERS: PLAINTEXT://kafka1:29092,OUTSIDE://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:29092,OUTSIDE://localhost:9095
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_SEGMENT_BYTES: 536870912
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka-net
+
+  kafka2:
+    image: confluentinc/cp-kafka:latest
+    ports:
+      - "9096:9092"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://kafka2:29092,OUTSIDE://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:29092,OUTSIDE://localhost:9096
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_SEGMENT_BYTES: 536870912
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka-net
+
+  kafka3:
+    image: confluentinc/cp-kafka:latest
+    ports:
+      - "9097:9092"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://kafka3:29092,OUTSIDE://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:29092,OUTSIDE://localhost:9097
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_SEGMENT_BYTES: 536870912
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka-net
+
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    networks:
+      - kafka-net
+
+  spark-worker-1:
+    image: bitnami/spark:latest
+    container_name: spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8081:8081"
+    depends_on:
+      - spark-master
+    networks:
+      - kafka-net
+
+  spark-worker-2:
+    image: bitnami/spark:latest
+    container_name: spark-worker-2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8082:8081"
+    depends_on:
+      - spark-master
+    networks:
+      - kafka-net
+
+networks:
+  kafka-net:
+    driver: bridge
