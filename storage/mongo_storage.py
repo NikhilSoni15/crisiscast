@@ -37,7 +37,13 @@ mongo_collection = db["reddit_posts"]
 
 class MongoStorage:
     def __init__(self, host: str, db_name: str):
-        self.client: MongoClient[Any] = MongoClient(host)
+        self.client: MongoClient[Any] = MongoClient(
+            host,
+            maxPoolSize=50,
+            connectTimeoutMS=5000,
+            serverSelectionTimeoutMS=5000,
+            retryWrites=True
+        )
         self.db: Database[Any] = self.client[db_name]
         try:
             _ = self.client.admin.command('ping')

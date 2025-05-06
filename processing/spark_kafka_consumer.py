@@ -121,13 +121,6 @@ df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf
 
 # 9. Setup MongoDB client with connection pooling and error handling
 mongo_client = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast_test")
-# mongo_client = MongoClient(
-#     "mongodb://localhost:27017/",
-#     maxPoolSize=50,
-#     connectTimeoutMS=5000,
-#     serverSelectionTimeoutMS=5000,
-#     retryWrites=True
-# )
 
 # 10. Setup Qdrant client and embedding model lazily to avoid driver memory issues
 embedding_model = None
