@@ -120,7 +120,7 @@ classify_crisis_udf = udf(classify_crisis_type_simple, StringType())
 df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf(col("title")))
 
 # 9. Setup MongoDB client with connection pooling and error handling
-mongo_client = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast_test")
+mongo_client = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast", "unified_post")
 
 # 10. Setup Qdrant client and embedding model lazily to avoid driver memory issues
 embedding_model = None
@@ -173,7 +173,7 @@ def write_to_all_outputs(df, epoch_id):
             
     # Insert into the appropriate collection
     try:
-        mongo_client.insert_many("unified_posts", data)
+        mongo_client.insert_many(data)
     except Exception as e:
         print(f"MongoDB error: {e}")
     

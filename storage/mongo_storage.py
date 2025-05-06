@@ -31,12 +31,10 @@ from typing import Any
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, PyMongoError
 
-mongo_client = MongoClient("mongodb://localhost:27017/")
-db: Database[Any] = mongo_client["crisiscast"]
-mongo_collection = db["reddit_posts"]
+ALL_CRISES=["natural_disaster", "terrorist_attack", "cyberattack", "pandemic", "war", "financial_crisis", "none"]
 
 class MongoStorage:
-    def __init__(self, host: str, db_name: str):
+    def __init__(self, host: str, db_name: str, collection_name: str):
         self.client: MongoClient[Any] = MongoClient(
             host,
             maxPoolSize=50,
@@ -44,6 +42,7 @@ class MongoStorage:
             serverSelectionTimeoutMS=5000,
             retryWrites=True
         )
+        self.collection_name = collection_name
         self.db: Database[Any] = self.client[db_name]
         try:
             _ = self.client.admin.command('ping')
@@ -56,8 +55,8 @@ class MongoStorage:
         self.client.close()
         print("see ya mongodb")
 
-    def insert_many(self, collection_name: str, documents: list[dict]):
-        result = self.db[collection_name].insert_many(documents)
+    def insert_many(self, documents: list[dict]):
+        result = self.db[self.collection_name].insert_many(documents)
         return str(result.inserted_ids)
     
     # what find functions are needed?
