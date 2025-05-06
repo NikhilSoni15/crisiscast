@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 # Load secrets
 load_dotenv("config/.env")
 print(":key: Username loaded:", os.getenv("REDDIT_USERNAME"))
-print(":key: Client ID loaded:", os.getenv("REDDIT_CLIENT_ID")[:4], "***")
+print(":key: Client ID loaded:", os.getenv("REDDIT_CLIENT_ID", "")[:4], "***")
 # Setup Reddit instance
 reddit = praw.Reddit(
     client_id=os.getenv("REDDIT_CLIENT_ID"),
