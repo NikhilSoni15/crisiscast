@@ -1,6 +1,7 @@
 import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
+import plotly.express as px
 
 import os
 from dotenv import load_dotenv
@@ -35,6 +36,18 @@ app.layout = dbc.Container([
             html.H2("Semantic Search"),
             dcc.Input(id="search-input", placeholder="type query…", type="text", style={"width":"100%"}),
             html.Div(id="search-results", className="mt-3")
+        ], width=6),
+    ], className="mt-4"),
+    dbc.Row([
+        # time series chart
+        dbc.Col([
+            html.H2("Posts by crisis type by time"),
+            # This div will get updated every 10 s
+            dcc.Graph(id="time-series", figure=px.line(
+                mongo.get_count_by_type_over_time(unit="minute"),
+                x="date", y="count", color="crisis_type"
+            )),
+            # dcc.Interval(id="time-series-input", interval=10*1000, n_intervals=0)
         ], width=6),
     ], className="mt-4")
 ], fluid=True, className="p-4")
