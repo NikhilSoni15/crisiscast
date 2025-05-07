@@ -2,12 +2,18 @@ import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
 
-from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
+
+# due to local import we must run as `python -m dashboard.app`
+from storage.mongo_storage import MongoStorage
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
+load_dotenv("config/.env")
+
 # ─── BACKEND SETUP ───────────────────────────────────────────────────────────────
-mongo = MongoClient("mongodb://localhost:27017/")["crisiscast"]["unified_posts"]
+mongo = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast", "unified_post")
 qdrant = QdrantClient(host="127.0.0.1", port=6333)
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 QCOL = "post_vectors"
@@ -42,7 +48,7 @@ def update_feed(n):
     # 1) Fetch newest posts sorted by your unified timestamp
     print(f"↻ update_feed called (n_intervals={n})")  # debug line
     raw = list(
-        mongo.find()
+        mongo.collection.find()
              .sort("timestamp", -1)
              .limit(20)   # grab a few extra so dedupe can trim to 10
     )
