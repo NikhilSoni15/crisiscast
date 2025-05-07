@@ -102,7 +102,7 @@ class MongoStorage:
             {
                 "$sort": {
                     "date": 1,
-                    "type": 1
+                    "crisis_type": 1
                 }
             }
         ]

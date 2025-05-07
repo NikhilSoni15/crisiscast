@@ -1,7 +1,9 @@
 import dash
 from dash import dcc, html, Input, Output
 import dash_bootstrap_components as dbc
-import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+from datetime import datetime, timedelta, timezone
 
 import os
 from dotenv import load_dotenv
@@ -19,6 +21,21 @@ qdrant = QdrantClient(host="127.0.0.1", port=6333)
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 QCOL = "post_vectors"
 
+# draw figure
+def draw_initial_time_series():
+    now_time = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+    df = mongo.get_count_by_type_over_time(unit="minute", to_date=now_time)
+    fig = go.Figure()
+    for crisis_type in pd.unique(df['crisis_type']):
+        sub_df = df[df['crisis_type'] == crisis_type]
+        fig.add_trace(go.Scatter(
+            x=sub_df['date'].tolist(),
+            y=sub_df['count'].tolist(),
+            mode='lines',
+            name=crisis_type
+        ))
+    return fig
+
 # ─── DASH APP LAYOUT ────────────────────────────────────────────────────────────
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 app.layout = dbc.Container([
@@ -28,7 +45,7 @@ app.layout = dbc.Container([
             html.H2("Live Feed"),
             # This div will get updated every 10 s
             html.Div(id="feed-container"),
-            dcc.Interval(id="feed-interval", interval=10*1000, n_intervals=0)
+            dcc.Interval(id="feed-interval", interval=60*1000, n_intervals=0)
         ], width=6),
 
         # Semantic Search column
@@ -42,12 +59,9 @@ app.layout = dbc.Container([
         # time series chart
         dbc.Col([
             html.H2("Posts by crisis type by time"),
-            # This div will get updated every 10 s
-            dcc.Graph(id="time-series", figure=px.line(
-                mongo.get_count_by_type_over_time(unit="minute"),
-                x="date", y="count", color="crisis_type"
-            )),
-            # dcc.Interval(id="time-series-input", interval=10*1000, n_intervals=0)
+            # This div will get updated every 60 s
+            dcc.Graph(id="time-series", figure=draw_initial_time_series()),
+            dcc.Interval(id="time-series-interval", interval=60*1000, n_intervals=0),
         ], width=6),
     ], className="mt-4")
 ], fluid=True, className="p-4")
@@ -130,6 +144,29 @@ def run_search(q):
             ], className="mb-3 bg-secondary text-white")
         )
     return results
+
+@app.callback(
+    Output("time-series", "extendData"),
+    Input("time-series", "figure"),
+    Input("time-series-interval", component_property="n_intervals")
+)
+def update_time_series(f, n):
+    if n == 0:
+        return None
+    now_time = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+    print(f"update_time_series: {n} {now_time}")
+    df = mongo.get_count_by_type_over_time(from_date=now_time, to_date=datetime.now(timezone.utc), unit="minute")
+    if df.empty:
+        return (dict(x=[], y=[]), [])
+    df = df.tail(1)
+    x = []
+    y = []
+    traces = []
+    for i, trace in enumerate(f['data']):
+        traces.append(i)
+        x.append(df[df['crisis_type'] == trace['name']]['date'].tolist())
+        y.append(df[df['crisis_type'] == trace['name']]['count'].tolist())
+    return (dict(x=x, y=y), traces)
 
 # ─── RUN SERVER ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
