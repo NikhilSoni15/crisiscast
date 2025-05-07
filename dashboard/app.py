@@ -158,7 +158,8 @@ def update_time_series(f, n):
     df = mongo.get_count_by_type_over_time(from_date=now_time, to_date=datetime.now(timezone.utc), unit="minute")
     if df.empty:
         return (dict(x=[], y=[]), [])
-    df = df.tail(1)
+    ts = df['date'].max()
+    df = df[df['date'] == ts]
     x = []
     y = []
     traces = []

@@ -8,6 +8,7 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from datetime import datetime
 import pandas as pd
+import numpy as np
 
 ALL_CRISES=["natural_disaster", "terrorist_attack", "cyberattack", "pandemic", "war", "financial_crisis", "none"]
 
@@ -116,9 +117,15 @@ class MongoStorage:
             end=df['date'].max(),
             freq=MONGODB_UNIT_TO_PANDAS_FREQ[unit]
         ).to_pydatetime()
-        df = df.set_index('date').reindex(dates).reset_index().reindex(columns=df.columns)
+        A, B = np.meshgrid(df['crisis_type'].unique(), dates)
+        cartesian_product = np.stack((A.flatten(), B.flatten()), axis=1)
+        df = df.set_index(['crisis_type', 'date']) \
+            .reindex(cartesian_product) \
+            .reset_index().reindex(columns=df.columns)
         cols = df.columns.difference(['count'])
         df[cols] = df[cols].ffill()
         df = df.fillna(0)
         return df
 
+    # Omer: "maybe a pie chart distribution of where the posts are originating from,
+    # based on the source attribute?"
