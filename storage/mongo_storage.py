@@ -62,8 +62,21 @@ class MongoStorage:
         result = self.collection.insert_many(documents_with_date)
         return str(result.inserted_ids)
     
-    def get_count_by_type_over_time(self, from_date=None, to_date=None, unit="day"):
+    def get_count_by_type_over_time(
+        self, 
+        from_date=datetime.min,
+        to_date=datetime.max,
+        unit="day"
+    ):
         pipeline = [
+            {
+                "$match": {
+                    "timestamp": {
+                        "$gte": from_date,
+                        "$lt": to_date
+                    }
+                }
+            },
             {
                 "$group": {
                     "_id": {
@@ -93,17 +106,10 @@ class MongoStorage:
                 }
             }
         ]
-        if from_date is not None and to_date is not None:
-            pipeline.insert(0, {
-                "$match": {
-                    "timestamp": {
-                        "$gte": from_date,
-                        "$lt": to_date
-                    }
-                }
-            })
         results = self.collection.aggregate(pipeline)
         df = pd.DataFrame(list(results))
+        if df.empty:
+            return df
         # fill in missing timestamps: https://stackoverflow.com/a/49187796
         dates = pd.date_range(
             start=df['date'].min(),
@@ -114,6 +120,5 @@ class MongoStorage:
         cols = df.columns.difference(['count'])
         df[cols] = df[cols].ffill()
         df = df.fillna(0)
-        print(df)
         return df
 
