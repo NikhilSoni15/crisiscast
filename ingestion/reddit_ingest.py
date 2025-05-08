@@ -10,15 +10,16 @@ from datetime import datetime, timezone
 # Load secrets
 load_dotenv("config/.env")
 print(":key: Username loaded:", os.getenv("REDDIT_USERNAME"))
-print(":key: Client ID loaded:", os.getenv("REDDIT_CLIENT_ID")[:4], "***")
+print(":key: Client ID loaded:", os.getenv("REDDIT_CLIENT_ID", "")[:4], "***")
 # Setup Reddit instance
 reddit = praw.Reddit(
     client_id=os.getenv("REDDIT_CLIENT_ID"),
     client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
     user_agent=os.getenv("REDDIT_USER_AGENT"),
-    username=os.getenv("REDDIT_USERNAME"),
-    password=os.getenv("REDDIT_PASSWORD")
 )
+
+reddit.read_only = True
+
 try:
     print(":white_check_mark: Logged in as:", reddit.user.me())
 except Exception as e:

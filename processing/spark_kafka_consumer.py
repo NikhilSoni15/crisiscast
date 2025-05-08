@@ -5,10 +5,11 @@ import os
 import requests
 import json
 from dotenv import load_dotenv
-from pymongo import MongoClient
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
+# due to local import we must run as `python -m processing.spark_kafka_consumer`
+from storage.mongo_storage import MongoStorage
 import uuid
 import time
 import threading
@@ -21,6 +22,8 @@ load_dotenv("config/.env")
 HF_TOKEN = os.getenv("HF_API_KEY")
 HF_API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+
+os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.0 pyspark-shell'
 
 # 2. Create Spark Session with improved configurations
 spark = SparkSession.builder \
@@ -117,14 +120,7 @@ classify_crisis_udf = udf(classify_crisis_type_simple, StringType())
 df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf(col("title")))
 
 # 9. Setup MongoDB client with connection pooling and error handling
-mongo_client = MongoClient(
-    "mongodb://localhost:27017/",
-    maxPoolSize=50,
-    connectTimeoutMS=5000,
-    serverSelectionTimeoutMS=5000,
-    retryWrites=True
-)
-db = mongo_client["crisiscast"]
+mongo_client = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast", "unified_post")
 
 # 10. Setup Qdrant client and embedding model lazily to avoid driver memory issues
 embedding_model = None
@@ -174,17 +170,12 @@ def write_to_all_outputs(df, epoch_id):
     
     if not data:
         return
-    
-    # Process each document
-    for doc in data:
-        
-        target_collection = db["unified_posts"]
-        
-        # Insert into the appropriate collection
-        try:
-            target_collection.insert_one(doc)
-        except Exception as e:
-            print(f"MongoDB error: {e}")
+            
+    # Insert into the appropriate collection
+    try:
+        mongo_client.insert_many(data)
+    except Exception as e:
+        print(f"MongoDB error: {e}")
     
     # Qdrant vector processing
     # Process in smaller chunks to avoid memory issues
