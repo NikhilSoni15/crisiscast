@@ -83,13 +83,13 @@ def update_feed(n):
         print("↻  fetched", len(raw), "docs; newest timestamp:", raw[0].get("timestamp"))
     else:
         print("↻  fetched 0 docs")
-    # 2) Deduplicate by `id`, keep first occurrence
-    seen = set()
+    # 2) Deduplicate by *title* (normalized), keep first 10 unique titles
+    seen_titles = set()
     unique = []
     for doc in raw:
-        pid = doc.get("id")
-        if pid and pid not in seen:
-            seen.add(pid)
+        title = doc.get("title", "").strip().lower()
+        if title and title not in seen_titles:
+            seen_titles.add(title)
             unique.append(doc)
         if len(unique) >= 10:
             break
@@ -125,25 +125,44 @@ def update_feed(n):
 def run_search(q):
     if not q:
         return ""
+
+    # 1) Encode the query to a vector
     vec = embed_model.encode(q).tolist()
-    hits = qdrant.search(collection_name=QCOL, query_vector=vec, limit=5)
+
+    # 2) Fetch top N raw hits from Qdrant
+    raw_hits = qdrant.search(collection_name=QCOL, query_vector=vec, limit=20)
+
+    # 3) Deduplicate by *title* (normalized), keep first 5 unique titles
+    seen_titles = set()
+    unique_hits = []
+    for hit in raw_hits:
+        title = hit.payload.get("title", "").strip().lower()
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        unique_hits.append(hit)
+        if len(unique_hits) >= 5:
+            break
+
+    # 4) Build Dash cards from unique_hits
     results = []
-    for i, h in enumerate(hits, 1):
+    for idx, h in enumerate(unique_hits, start=1):
         p = h.payload
-        title = p.get("title") or p.get("text","(no title)")
-        url   = p.get("url","#")
-        ctype = p.get("crisis_type","none")
+        title = p.get("title", "(no title)")
+        url   = p.get("url", "#")
+        ctype = p.get("crisis_type", "none")
         results.append(
             dbc.Card([
                 dbc.CardBody([
-                    html.H6(f"Result {i} – Score {h.score:.3f}", className="card-subtitle"),
+                    html.H6(f"Result {idx} – Score {h.score:.3f}", className="card-subtitle"),
                     html.H5(title, className="card-title"),
                     html.P(f"Type: {ctype}", className="card-text"),
                     html.A("🔗 Link", href=url, target="_blank")
                 ])
             ], className="mb-3 bg-secondary text-white")
         )
-    return results
+    return results 
+
 
 @app.callback(
     Output("time-series", "extendData"),

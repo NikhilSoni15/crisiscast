@@ -6,129 +6,136 @@ from atproto_client.exceptions import RequestException, BadRequestError
 from kafka import KafkaProducer
 from dotenv import load_dotenv
 from dateutil import parser
-from datetime import datetime, timezone
+from datetime import timezone
+from fast_langdetect import detect, detect_multilingual, DetectError
 
 load_dotenv("config/.env")
 HANDLE        = os.getenv("BLUESKY_USERNAME")
 PASSWORD      = os.getenv("BLUESKY_PASSWORD")
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 30))
+POLL_INTERVAL = 20
+
 
 def at_uri_to_url(at_uri: str) -> str:
-    """
-    Convert an AT-URI like:
-      at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3k4duaz5vfs2b
-    into a web link:
-      https://bsky.app/profile/did:plc:z72i7hdynmk6r22z27h6tvur/post/3k4duaz5vfs2b
-    """
     path = at_uri.replace("at://", "")
     authority, _, rkey = path.split("/", 2)
     return f"https://bsky.app/profile/{authority}/post/{rkey}"
 
-def stream_whats_hot():
+def stream_bluesky_feeds():
     client = Client()
     client.login(HANDLE, PASSWORD)
 
-    # set up Kafka producer
     producer = KafkaProducer(
-        bootstrap_servers=['localhost:9095', 'localhost:9096', 'localhost:9097'],
+        bootstrap_servers=['localhost:9095','localhost:9096','localhost:9097'],
         value_serializer=lambda v: json.dumps(v).encode('utf-8')
     )
 
-    feed_uri       = (
-        "at://did:plc:z72i7hdynmk6r22z27h6tvur/"
-        "app.bsky.feed.generator/whats-hot"
-    )
-    cursor         = None
-    seen_uris      = set()
-    allowed_topics = {"t-news", "nettop"}
+    # Feeds to pull
+    feed_streams = {
+        "whats_hot":     "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot",
+        "verified_news": "at://did:plc:kkf4naxqmweop7dv4l2iqqf5/app.bsky.feed.generator/verified-news",
+    }
+    cursors     = {name: None for name in feed_streams}
+    seen_uris   = set()
+    # Only apply this filter to the What's Hot feed:
+    allowed_topics = {"t-news"}
 
-    print("🚀 Streaming Bluesky “What’s Hot”…")
+    print("🚀 Streaming Bluesky feeds (What’s Hot + Verified News)…")
     while True:
-        params = {"feed": feed_uri, "limit": 50}
-        if cursor:
-            params["cursor"] = cursor
+        for feed_name, feed_uri in feed_streams.items():
+            params = {"feed": feed_uri, "limit": 50}
+            if cursors[feed_name]:
+                params["cursor"] = cursors[feed_name]
 
-        # resilience to 400, 500, 503, and any other errors
-        backoff = 1
-        resp = None
-        while True:
-            try:
-                resp = client.app.bsky.feed.get_feed(params)
-                break
-            except BadRequestError:
-                # 400 InvalidRequest: bad cursor—reset & skip this round
-                print("⚠️ 400 InvalidRequest from Bluesky; resetting cursor and skipping this round.")
-                cursor = None
-                break
-            except RequestException as e:
-                code = e.response.status_code if e.response else None
-                # retry on server errors
-                if code in (500, 503) or getattr(e, "error", "") == "NotEnoughResources":
-                    print(f"⚠️ {code or 'ServerError'} from Bluesky; backing off {backoff}s…")
+            # backoff + resilience
+            backoff = 1
+            resp = None
+            while True:
+                try:
+                    resp = client.app.bsky.feed.get_feed(params)
+                    break
+                except BadRequestError:
+                    print(f"⚠️ 400 InvalidRequest on '{feed_name}'; resetting cursor.")
+                    cursors[feed_name] = None
+                    break
+                except RequestException as e:
+                    code = e.response.status_code if e.response else None
+                    if code in (500,503) or getattr(e, "error","") == "NotEnoughResources":
+                        print(f"⚠️ Server {code} on '{feed_name}'; backing off {backoff}s…")
+                        time.sleep(backoff)
+                        backoff = min(backoff * 2, 60)
+                        continue
+                    print(f"⚠️ RequestException on '{feed_name}': {e}; backing off {backoff}s")
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 60)
                     continue
-                # unknown request error: log and retry
-                print(f"⚠️ RequestException: {e}; retrying in {backoff}s…")
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 60)
-                continue
-            except Exception as e:
-                # any other error
-                print(f"⚠️ Unexpected error: {e}; retrying in {backoff}s…")
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 60)
+                except Exception as e:
+                    print(f"⚠️ Unexpected error on '{feed_name}': {e}; backing off {backoff}s")
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+                    continue
+
+            if resp is None:
                 continue
 
-        # if we never got a response (due to BadRequestError), skip processing
-        if resp is None:
-            time.sleep(POLL_INTERVAL)
-            continue
+            posts         = resp.feed
+            cursors[feed_name] = resp.cursor
 
-        posts  = resp.feed
-        cursor = resp.cursor
+            for item in posts:
+                try:
+                    # if we're in What's Hot, enforce topic filter:
+                    if feed_name == "whats_hot":
+                        ctx = getattr(item.feed_context, "type", None) or item.feed_context
+                        if ctx not in allowed_topics:
+                            continue
 
-        for item in posts:
-            try:
-                if item.feed_context not in allowed_topics:
-                    continue
-                text = item.post.record.text or ""
-                if not text.strip():
-                    continue
+                    text = item.post.record.text or ""
+                    text = text.replace("\n", "")
+                    if not text.strip():
+                        continue
+                    
+                    # language filter via fast-langdetect
+                    try:
+                        res = detect(text[:100].strip(), low_memory=False)              
+                        if res["lang"] != "en":
+                            continue                    
+                    except DetectError:
+                        continue   
 
-                uri = item.post.uri
-                if uri in seen_uris:
-                    continue
-                seen_uris.add(uri)
+                    uri = item.post.uri
+                    if uri in seen_uris:
+                        continue
+                    seen_uris.add(uri)
 
-                post = item.post
-                data = {
-                    "id":        post.cid,
-                    "title":     text,
-                    "timestamp": parser.isoparse(post.indexed_at)
-                                            .astimezone(timezone.utc)
-                                            .isoformat(),
-                    "author":    post.author.handle,
-                    "url":       at_uri_to_url(post.uri),
-                    "source":    "Bluesky: What's Hot",
-                }
+                    data = {
+                        "id":        item.post.cid,
+                        "title":     text,
+                        "timestamp": parser.isoparse(item.post.indexed_at)
+                                                   .astimezone(timezone.utc)
+                                                   .isoformat(),
+                        "author":    item.post.author.handle,
+                        "url":       at_uri_to_url(uri),
+                        "source":    f"Bluesky: {feed_name.replace('_',' ').title()}",
+                    }
 
-                print(f"\n📌 {data['title']}")
-                print(data)
+                    # Re-added your original prints:
+                    print(f"\n📌 {data['title']}")
+                    print(data)
 
-                producer.send("bluesky_posts", data)
-            except Exception as e:
-                print(f"⚠️ Error processing item {getattr(item.post, 'cid', '<unknown>')}: {e}; skipping.")
+                    producer.send("bluesky_posts", data)
+
+                except Exception as e:
+                    print(f"⚠️ Error processing {feed_name} item {uri}: {e}")
 
         time.sleep(POLL_INTERVAL)
 
+'''
 if __name__ == "__main__":
     try:
-        stream_whats_hot()
+        stream_bluesky_feeds()
     except KeyboardInterrupt:
-        print("\n🛑 Stream stopped by user")
+        print("\n🛑 Stream stopped by user.")
     except Exception as e:
-        # catch anything unexpected at top level and keep running
-        print(f"⚠️ Fatal error in main loop: {e}; restarting stream…")
+        print(f"⚠️ Fatal error: {e}; restarting in 5s…")
         time.sleep(5)
-        stream_whats_hot()
+        stream_bluesky_feeds()
+'''

@@ -11,8 +11,8 @@ from dotenv import load_dotenv
 from requests.exceptions import RequestException
 
 load_dotenv("config/.env")
-RSS_URL       = os.getenv("NEWS_RSS_URL")
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 60))
+RSS_URL       = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
+POLL_INTERVAL = 20
 
 def stream_news():
     seen = set()
@@ -78,8 +78,10 @@ def stream_news():
 
         time.sleep(POLL_INTERVAL)
 
+'''
 if __name__ == "__main__":
     try:
         stream_news()
     except KeyboardInterrupt:
         print("\n🛑 Stream stopped by user")
+'''

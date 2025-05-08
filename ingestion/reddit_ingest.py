@@ -5,7 +5,6 @@ import dotenv
 from dotenv import load_dotenv
 import json
 from kafka import KafkaProducer
-#import datetime
 from datetime import datetime, timezone
 
 # Load secrets
@@ -32,7 +31,7 @@ producer = KafkaProducer(
 def main():
     print(":rocket: Connected to Reddit API. Listening to subreddit...")
     # subreddit = reddit.subreddit("worldnews")
-    subreddit = reddit.subreddit("news+worldnews+technology")
+    subreddit = reddit.subreddit("news+worldnews+politics+geopolitics+breakingnews+InternationalNews+Economics+law")
     # for submission in subreddit.stream.submissions(skip_existing=True):
     for submission in subreddit.stream.submissions():
         post = {
@@ -47,5 +46,6 @@ def main():
         print(post)
         # Send to Kafka
         producer.send("reddit_posts", post)
-if __name__ == "__main__":
-    main()
+
+#if __name__ == "__main__":
+#    main()
