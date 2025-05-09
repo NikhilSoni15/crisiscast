@@ -6,3 +6,5 @@ __pycache__/
 .DS_Store
 venv/
 .venv/
+crisis_env310/
+classification/

@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 load_dotenv("config/.env")
 
 # ─── BACKEND SETUP ───────────────────────────────────────────────────────────────
-mongo = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast", "unified_post")
+mongo = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast_nikhil", "unified_post")
 qdrant = QdrantClient(host="127.0.0.1", port=6333)
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 QCOL = "post_vectors"
