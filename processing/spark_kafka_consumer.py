@@ -20,7 +20,7 @@ from functools import lru_cache
 # 1. Load environment variables
 load_dotenv("config/.env")
 HF_TOKEN = os.getenv("HF_API_KEY")
-HF_API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.0 pyspark-shell'
@@ -76,34 +76,48 @@ def classify_crisis_type_simple(title):
     """Simple classification function without threading dependencies"""
     if not title:
         return "none"
+
+    allowed = ["natural_disaster", "terrorist_attack", "cyberattack", "pandemic",
+        "war", "financial_crisis", "none"]
     
     # Direct API call
-    prompt = f"Classify the type of crisis in the following sentence:\n{title}\nCrisis type:"
+    prompt = "".join([
+        "[INST] What type of crisis is described below? Choose one of: " +
+        f"{", ".join(allowed)}\nIf none of them applies, reply \"none\".\n\n" +
+        f"{title.strip().replace("\n", " ")}\n\nOnly return the category, don't include reasons.[/INST]"
+    ])
     
     try:
         response = requests.post(
             HF_API_URL,
             headers=HEADERS,
-            json={"inputs": prompt},
-            timeout=10
+            json={
+                "model": "mistralai/Mistral-7B-Instruct-v0.3",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.5,
+                "max_tokens": 500,
+                "top_p": 0.7
+            }
         )
         
         if response.status_code == 200:
             results = response.json()
-            if isinstance(results, list) and len(results) > 0:
-                generated_text = results[0].get("generated_text", "").strip().lower()
-            else:
-                generated_text = results.get("generated_text", "").strip().lower()
+            generated_text = results["choices"][0]["message"]["content"].strip().lower()
             
             # Extract crisis type
             crisis_type = "none"
-            allowed = ["natural_disaster", "terrorist_attack", "cyberattack", 
-                      "pandemic", "war", "financial_crisis", "none"]
             
             for label in allowed:
                 if label in generated_text:
                     crisis_type = label
                     break
+
+            print(crisis_type)
                 
             return crisis_type
         else:
