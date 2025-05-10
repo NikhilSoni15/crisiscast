@@ -23,7 +23,7 @@ QCOL = "post_vectors"
 
 # draw figure
 def draw_initial_time_series():
-    now_time = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+    now_time = datetime.now().replace(second=0, microsecond=0) - timedelta(minutes=1)
     df = mongo.get_count_by_type_over_time(unit="minute", to_date=now_time)
     fig = go.Figure()
     for crisis_type in pd.unique(df['crisis_type']):
@@ -172,9 +172,9 @@ def run_search(q):
 def update_time_series(f, n):
     if n == 0:
         return None
-    now_time = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+    now_time = min(map(lambda x: datetime.fromisoformat(x['x'][-1]), f['data']))
     print(f"update_time_series: {n} {now_time}")
-    df = mongo.get_count_by_type_over_time(from_date=now_time, to_date=datetime.now(timezone.utc), unit="minute")
+    df = mongo.get_count_by_type_over_time(from_date=now_time, to_date=datetime.now(), unit="minute")
     if df.empty:
         return (dict(x=[], y=[]), [])
     ts = df['date'].max()

@@ -112,9 +112,11 @@ class MongoStorage:
         if df.empty:
             return df
         # fill in missing timestamps: https://stackoverflow.com/a/49187796
+        min_date = from_date if from_date != datetime.min else df['date'].min()
+        max_date = to_date if to_date != datetime.min else df['date'].max()        
         dates = pd.date_range(
-            start=df['date'].min(),
-            end=df['date'].max(),
+            start=min_date,
+            end=max_date,
             freq=MONGODB_UNIT_TO_PANDAS_FREQ[unit]
         ).to_pydatetime()
         A, B = np.meshgrid(df['crisis_type'].unique(), dates)
