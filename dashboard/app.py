@@ -23,7 +23,7 @@ QCOL = "post_vectors"
 
 # draw figure
 def draw_initial_time_series():
-    now_time = datetime.now().replace(second=0, microsecond=0) - timedelta(minutes=1)
+    now_time = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
     df = mongo.get_count_by_type_over_time(unit="minute", to_date=now_time)
     fig = go.Figure()
     for crisis_type in pd.unique(df['crisis_type']):
@@ -75,9 +75,10 @@ def update_feed(n):
     # 1) Fetch newest posts sorted by your unified timestamp
     print(f"↻ update_feed called (n_intervals={n})")  # debug line
     raw = list(
-        mongo.collection.find()
-             .sort("timestamp", -1)
-             .limit(20)   # grab a few extra so dedupe can trim to 10
+        mongo.collection.aggregate([
+            { "$sort": { "timestamp": -1 } },
+            { "$limit": 20 } # grab a few extra so dedupe can trim to 10
+        ])
     )
     if raw:
         print("↻  fetched", len(raw), "docs; newest timestamp:", raw[0].get("timestamp"))

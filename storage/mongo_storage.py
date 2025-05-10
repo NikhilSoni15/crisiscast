@@ -69,6 +69,8 @@ class MongoStorage:
         to_date=datetime.max,
         unit="day"
     ):
+        from_date = from_date.replace(tzinfo=None)
+        to_date = to_date.replace(tzinfo=None)
         pipeline = [
             {
                 "$match": {
