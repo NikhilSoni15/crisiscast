@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json, udf, window, current_timestamp
+from pyspark.sql.functions import col, from_json, udf, current_timestamp, lit, row_number, monotonically_increasing_id, when
 from pyspark.sql.types import StructType, StringType, TimestampType
+from pyspark.sql import Window
 import os
 import requests
 import json
@@ -19,13 +20,15 @@ from functools import lru_cache
 
 # 1. Load environment variables
 load_dotenv("config/.env")
-HF_TOKEN = os.getenv("HF_API_KEY")
-HF_API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions"
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+# HF_TOKEN = os.getenv("HF_API_KEY")
+# HF_API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions"
+# HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 MONGODB_HOST = os.getenv("MONGODB_STRING", "mongodb://localhost:27017/")
 MONGODB_DB = "crisiscast"
 MONGODB_COLL = "unified_post"
+
+GOOGLE_AI_KEY = os.getenv("GOOGLE_AI_KEY")
 
 os.environ['PYSPARK_SUBMIT_ARGS'] = (
     '--packages org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.0,'
@@ -84,66 +87,105 @@ df_parsed = df_raw.selectExpr("CAST(value AS STRING) as json_str") \
 df_with_time = df_parsed.withColumn("processing_time", current_timestamp())
 
 # Simple classification function without threading
-def classify_crisis_type_simple(title):
-    """Simple classification function without threading dependencies"""
-    if not title:
-        return "none"
+# def classify_crisis_type_simple(title):
+#     """Simple classification function without threading dependencies"""
+#     if not title:
+#         return "none"
 
-    allowed = ["natural_disaster", "terrorist_attack", "cyberattack", "pandemic",
-        "war", "financial_crisis", "none"]
+#     allowed = ["natural_disaster", "terrorist_attack", "cyberattack", "pandemic",
+#         "war", "financial_crisis", "none"]
     
-    # Direct API call
-    prompt = "".join([
-        "[INST] What type of crisis is described below? Choose one of: " +
-        f"{", ".join(allowed)}\nIf none of them applies, reply \"none\".\n\n" +
-        f"{title.strip().replace("\n", " ")}\n\nOnly return the category, don't include reasons.[/INST]"
-    ])
+#     # Direct API call
+#     prompt = "".join([
+#         "[INST] What type of crisis is described below? Choose one of: " +
+#         f"{", ".join(allowed)}\nIf none of them applies, reply \"none\".\n\n" +
+#         f"{title.strip().replace("\n", " ")}\n\nOnly return the category, don't include reasons.[/INST]"
+#     ])
     
+#     try:
+#         response = requests.post(
+#             HF_API_URL,
+#             headers=HEADERS,
+#             json={
+#                 "model": "mistralai/Mistral-7B-Instruct-v0.3",
+#                 "messages": [
+#                     {
+#                         "role": "user",
+#                         "content": prompt
+#                     }
+#                 ],
+#                 "temperature": 0.5,
+#                 "max_tokens": 500,
+#                 "top_p": 0.7
+#             }
+#         )
+        
+#         if response.status_code == 200:
+#             results = response.json()
+#             generated_text = results["choices"][0]["message"]["content"].strip().lower()
+            
+#             # Extract crisis type
+#             crisis_type = "none"
+            
+#             for label in allowed:
+#                 if label in generated_text:
+#                     crisis_type = label
+#                     break
+
+#             print(crisis_type)
+                
+#             return crisis_type
+#         else:
+#             print(f"API Error: {response.status_code} {response.text}")
+#             return "none"
+#     except Exception as e:
+#         print(f"Classification error: {e}")
+#         return "none"
+
+def classify_crisis_via_google(df):
+    titles = [ row['title'] for row in df.select("title").collect() ]
+    allowed = ["natural_disaster", "terrorist_attack", "cyberattack", "pandemic", "war", "financial_crisis"]
+    prompt = (
+        f"What type of crisis is described for each of the headlines below? Choose one of: \"{"\", \"".join(allowed)}\". "
+        "If none of them applies, reply \"none\". Only return the category in order, don't include reasons.\n\n"
+        f"\"{"\"\n\"".join(titles)}\""
+    )
     try:
         response = requests.post(
-            HF_API_URL,
-            headers=HEADERS,
-            json={
-                "model": "mistralai/Mistral-7B-Instruct-v0.3",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0.5,
-                "max_tokens": 500,
-                "top_p": 0.7
-            }
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GOOGLE_AI_KEY}",
+            json={ "contents": [ { "parts": [{ "text": prompt }]}]}
         )
         
         if response.status_code == 200:
             results = response.json()
-            generated_text = results["choices"][0]["message"]["content"].strip().lower()
+            generated_text = results["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
             
             # Extract crisis type
-            crisis_type = "none"
-            
-            for label in allowed:
-                if label in generated_text:
-                    crisis_type = label
-                    break
+            values = generated_text.split("\n")
 
-            print(crisis_type)
+            # Add row number
+            df = df.withColumn('crisis_type', lit('none')) \
+                .withColumn("row_num",row_number().over(Window.orderBy(monotonically_increasing_id())))
+
+            # Create mapping conditions
+            mapping_expr = when(col("row_num") == 1, values[0])
+            for i, val in enumerate(values[1:], 2):
+                mapping_expr = mapping_expr.when(col("row_num") == i, val)
                 
-            return crisis_type
+            # Apply mapping and drop temporary column
+            return df.withColumn("crisis_type", mapping_expr).drop("row_num")
         else:
             print(f"API Error: {response.status_code} {response.text}")
-            return "none"
+            return df.withColumn('crisis_type', lit('none'))
     except Exception as e:
         print(f"Classification error: {e}")
-        return "none"
+        return df.withColumn('crisis_type', lit('none'))
 
 # 7. Register UDF
-classify_crisis_udf = udf(classify_crisis_type_simple, StringType())
+# classify_crisis_udf = udf(classify_crisis_type_simple, StringType())
 
 # 8. Apply UDF to DataFrame
-df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf(col("title")))
+# df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf(col("title")))
 
 # 9. Setup MongoDB client with connection pooling and error handling
 # in practice this is just for initialization and never reused
@@ -186,6 +228,13 @@ def write_to_all_outputs(df, epoch_id):
         except Exception as e:
             print(f"Error initializing embedding model: {e}")
             return
+
+    # do classification
+    try:
+        df = classify_crisis_via_google(df)
+    except Exception as e:
+        print(f"Classification error: {e}")
+        return
 
     # Insert into the appropriate collection
     try:
@@ -278,7 +327,7 @@ monitor_thread = threading.Thread(target=monitor_memory, daemon=True)
 monitor_thread.start()
 
 # 12. Start the Streaming Query with checkpoint and trigger
-query = df_with_crisis_type.writeStream \
+query = df_with_time.writeStream \
     .foreachBatch(write_to_all_outputs) \
     .option("checkpointLocation", "/tmp/checkpoints/reddit_stream") \
     .trigger(processingTime="5 seconds") \
