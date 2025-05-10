@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, udf, window, current_timestamp
-from pyspark.sql.types import StructType, StringType, DoubleType
+from pyspark.sql.types import StructType, StringType, TimestampType
 import os
 import requests
 import json
@@ -23,7 +23,14 @@ HF_TOKEN = os.getenv("HF_API_KEY")
 HF_API_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions"
 HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.0 pyspark-shell'
+MONGODB_HOST = os.getenv("MONGODB_STRING", "mongodb://localhost:27017/")
+MONGODB_DB = "crisiscast"
+MONGODB_COLL = "unified_post"
+
+os.environ['PYSPARK_SUBMIT_ARGS'] = (
+    '--packages org.apache.spark:spark-streaming-kafka-0-10_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.0,'
+    'org.mongodb.spark:mongo-spark-connector_2.12:10.4.1 pyspark-shell'
+)
 
 # 2. Create Spark Session with improved configurations
 spark = SparkSession.builder \
@@ -39,6 +46,11 @@ spark = SparkSession.builder \
     .config("spark.streaming.kafka.maxRatePerPartition", "100") \
     .config("spark.streaming.kafka.consumer.cache.enabled", "false") \
     .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+    .config("spark.mongodb.write.connection.uri", MONGODB_HOST) \
+    .config("spark.mongodb.write.database", MONGODB_DB) \
+    .config("spark.mongodb.write.collection", MONGODB_COLL) \
+    .config("spark.mongodb.write.upsertDocument", "false") \
+    .config("spark.mongodb.write.convertJson", "any") \
     .getOrCreate()
 
 # Set log level to minimize unnecessary output
@@ -48,7 +60,7 @@ spark.sparkContext.setLogLevel("WARN")
 schema = StructType() \
     .add("id", StringType()) \
     .add("title", StringType()) \
-    .add("timestamp", StringType(), True) \
+    .add("timestamp", TimestampType(), True) \
     .add("author", StringType()) \
     .add("url", StringType()) \
     .add("source", StringType(), True)
@@ -134,7 +146,8 @@ classify_crisis_udf = udf(classify_crisis_type_simple, StringType())
 df_with_crisis_type = df_with_time.withColumn("crisis_type", classify_crisis_udf(col("title")))
 
 # 9. Setup MongoDB client with connection pooling and error handling
-mongo_client = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), "crisiscast", "unified_post")
+# in practice this is just for initialization and never reused
+mongo_client = MongoStorage(os.getenv("MONGODB_STRING", "mongodb://localhost:27017/"), MONGODB_DB, MONGODB_COLL)
 
 # 10. Setup Qdrant client and embedding model lazily to avoid driver memory issues
 embedding_model = None
@@ -173,6 +186,12 @@ def write_to_all_outputs(df, epoch_id):
         except Exception as e:
             print(f"Error initializing embedding model: {e}")
             return
+
+    # Insert into the appropriate collection
+    try:
+        df.write.format("mongodb").mode("append").save()
+    except Exception as e:
+        print(f"MongoDB error: {e}")
     
     # Convert to pandas
     try:
@@ -184,12 +203,6 @@ def write_to_all_outputs(df, epoch_id):
     
     if not data:
         return
-            
-    # Insert into the appropriate collection
-    try:
-        mongo_client.insert_many(data)
-    except Exception as e:
-        print(f"MongoDB error: {e}")
     
     # Qdrant vector processing
     # Process in smaller chunks to avoid memory issues
